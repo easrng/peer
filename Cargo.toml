@@ -1,0 +1,18 @@
+workspace = { members = ["cert", "wasm"] }
+[package]
+name = "peer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.83"
+hex = "0.4.3"
+serde = { version = "1.0.203", features = ["derive"] }
+tokio = { version = "1.4.0", features = ["rt-multi-thread", "macros"] }
+toml = "0.8.14"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+wtransport = "0.1.13"
+cert = { path = "cert" }
