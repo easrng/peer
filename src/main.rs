@@ -41,21 +41,19 @@ async fn main() -> Result<()> {
         })
         .unwrap();
 
+    let cert = cert::self_signed(
+        config.host.clone(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs()
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
     let identity = wtransport::Identity::new(
         wtransport::tls::CertificateChain::single(
-            wtransport::tls::Certificate::from_der(
-                cert::self_signed(
-                    config.host,
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs()
-                        .try_into()
-                        .unwrap(),
-                )
-                .unwrap(),
-            )
-            .unwrap(),
+            wtransport::tls::Certificate::from_der(cert).unwrap(),
         ),
         wtransport::tls::PrivateKey::from_der_pkcs8(cert::HARDCODED_NOT_SO_SECRET_KEY_DER.into()),
     );
@@ -84,7 +82,7 @@ async fn handle_connection(incoming_session: IncomingSession) {
 }
 
 async fn handle_connection_impl(incoming_session: IncomingSession) -> Result<()> {
-    let mut buffer = vec![0; 65536].into_boxed_slice();
+    let mut buffer: [u8; 65536] = [0; 65536];
 
     info!("Waiting for session request...");
 
@@ -97,50 +95,11 @@ async fn handle_connection_impl(incoming_session: IncomingSession) -> Result<()>
     );
 
     let connection = session_request.accept().await?;
-
-    info!("Waiting for data from client...");
-
+    let mut stream = connection.open_bi().await?.await?;
     loop {
-        tokio::select! {
-            stream = connection.accept_bi() => {
-                let mut stream = stream?;
-                info!("Accepted BI stream");
-
-                let bytes_read = match stream.1.read(&mut buffer).await? {
-                    Some(bytes_read) => bytes_read,
-                    None => continue,
-                };
-
-                let str_data = std::str::from_utf8(&buffer[..bytes_read])?;
-
-                info!("Received (bi) '{str_data}' from client");
-
-                stream.0.write_all(b"ACK").await?;
-            }
-            stream = connection.accept_uni() => {
-                let mut stream = stream?;
-                info!("Accepted UNI stream");
-
-                let bytes_read = match stream.read(&mut buffer).await? {
-                    Some(bytes_read) => bytes_read,
-                    None => continue,
-                };
-
-                let str_data = std::str::from_utf8(&buffer[..bytes_read])?;
-
-                info!("Received (uni) '{str_data}' from client");
-
-                let mut stream = connection.open_uni().await?.await?;
-                stream.write_all(b"ACK").await?;
-            }
-            dgram = connection.receive_datagram() => {
-                let dgram = dgram?;
-                let str_data = std::str::from_utf8(&dgram)?;
-
-                info!("Received (dgram) '{str_data}' from client");
-
-                connection.send_datagram(b"ACK")?;
-            }
+        let read = stream.1.read(buffer.as_mut()).await?;
+        if read.is_some() {
+            stream.0.write(&buffer[0..read.unwrap()]).await?;
         }
     }
 }

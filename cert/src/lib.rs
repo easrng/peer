@@ -16,11 +16,15 @@ pub const HARDCODED_NOT_SO_SECRET_KEY_DER: [u8; 138] = [
 const COMMON_NAME_OID: [u64; 4] = [2, 5, 4, 3];
 const SUBJECT_ALT_NAME: [u64; 4] = [2, 5, 29, 17];
 
-pub fn self_signed(name: String, now: i64) -> Result<Vec<u8>, std::io::Error> {
+pub fn self_signed(name: String, now: i64) -> Result<Vec<u8>, String> {
     let secret_key: ecdsa::SigningKey<p256::NistP256> =
         p256::ecdsa::SigningKey::from_pkcs8_der(&HARDCODED_NOT_SO_SECRET_KEY_DER).unwrap();
     let public_key = secret_key.verifying_key();
     let not_before = now / 1209600 * 1209600;
+    let mut ip: Result<Vec<u8>, _> = name.parse::<std::net::IpAddr>().map(|ip| match ip {
+        std::net::IpAddr::V4(ip4) => ip4.octets().into(),
+        std::net::IpAddr::V6(ip6) => ip6.octets().into(),
+    });
     let certificate = simple_x509::X509Builder::new(vec![
         91, 57, 155, 185, 151, 10, 131, 60, 117, 27, 145, 185, 3, 175, 178, 175, 230, 200, 39, 11,
     ])
@@ -35,12 +39,12 @@ pub fn self_signed(name: String, now: i64) -> Result<Vec<u8>, std::io::Error> {
             vec![simple_asn1::ASN1Block::Unknown(
                 simple_asn1::ASN1Class::ContextSpecific,
                 false,
-                name.len(),
-                2_u8.into(),
-                name.into(),
+                ip.as_mut().map_or_else(|_| name.len(), |ip| ip.len()),
+                ip.as_mut().map_or_else(|_| 2_u8, |_| 7_u8).into(),
+                ip.map_or_else(|_| name.into(), |ip| ip),
             )],
         ))
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?,
+        .map_err(|e| format!("{e:?}"))?,
     )
     .not_before_utc(not_before)
     .not_after_utc(not_before + 1209600)
@@ -58,6 +62,6 @@ pub fn self_signed(name: String, now: i64) -> Result<Vec<u8>, std::io::Error> {
         },
         &[],
     )
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
-    return Ok(certificate.x509_enc().unwrap());
+    .map_err(|e| format!("{e:?}"))?;
+    return certificate.x509_enc().map_err(|e| format!("{e:?}"));
 }
