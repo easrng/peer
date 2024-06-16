@@ -24,12 +24,12 @@ async function* lines(stream) {
 
 window.connect = async function connect(host, port) {
   const url = new URL("https://x");
-  url.hostname = host;
+  url.hostname = host.includes(":") && host[0] !== "[" ? `[${host}]` : host;
   url.port = port;
   await init();
   const serverCertificateHashes = hashes(
-    url.hostname,
-    BigInt(Math.floor(Date.now() / 1000)),
+    url.hostname[0] === "[" ? url.hostname.slice(1, -1) : url.hostname,
+    BigInt(Math.floor(Date.now() / 1000))
   ).map((value) => ({
     algorithm: "sha-256",
     value,
@@ -48,6 +48,9 @@ window.connect = async function connect(host, port) {
     lines: lines(stream.readable),
     send: (message) => {
       writer.write(encoder.encode(message));
+    },
+    close: () => {
+      transport.close();
     },
   };
 };

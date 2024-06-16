@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::env;
 use std::fs;
 use std::process::exit;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 use tracing::info;
@@ -12,9 +13,11 @@ use tracing_subscriber::EnvFilter;
 use wtransport::endpoint::IncomingSession;
 use wtransport::Endpoint;
 use wtransport::ServerConfig;
+mod cert_resolver;
 
 #[derive(serde::Deserialize)]
 struct Config {
+    bind: Option<String>,
     host: String,
     port: u16,
 }
@@ -40,27 +43,24 @@ async fn main() -> Result<()> {
             exit(1);
         })
         .unwrap();
+    let mut tls_config = wtransport::config::TlsServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(cert_resolver::ResolvesServerCertUsingSni::new(
+            config.host,
+        )));
+    tls_config.alpn_protocols = [wtransport::tls::WEBTRANSPORT_ALPN.to_vec()].to_vec();
 
-    let cert = cert::self_signed(
-        config.host.clone(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs()
-            .try_into()
-            .unwrap(),
-    )
-    .unwrap();
-    let identity = wtransport::Identity::new(
-        wtransport::tls::CertificateChain::single(
-            wtransport::tls::Certificate::from_der(cert).unwrap(),
-        ),
-        wtransport::tls::PrivateKey::from_der_pkcs8(cert::HARDCODED_NOT_SO_SECRET_KEY_DER.into()),
-    );
-
-    let config = ServerConfig::builder()
-        .with_bind_default(config.port)
-        .with_identity(&identity)
+    let config: ServerConfig = config
+        .bind
+        .map_or_else(
+            || ServerConfig::builder().with_bind_default(config.port),
+            |bind| {
+                ServerConfig::builder()
+                    .with_bind_address(bind.parse::<core::net::SocketAddr>().unwrap())
+            },
+        )
+        .with_custom_tls(tls_config)
         .keep_alive_interval(Some(Duration::from_secs(3)))
         .build();
 
@@ -78,7 +78,9 @@ async fn main() -> Result<()> {
 
 async fn handle_connection(incoming_session: IncomingSession) {
     let result = handle_connection_impl(incoming_session).await;
-    error!("{:?}", result);
+    if result.is_err() {
+        error!("{:?}", result.unwrap_err());
+    }
 }
 
 async fn handle_connection_impl(incoming_session: IncomingSession) -> Result<()> {
